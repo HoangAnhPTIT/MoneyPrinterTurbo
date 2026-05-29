@@ -99,5 +99,20 @@ def _nullctx():
     yield
 
 
+from app.services.mathflow import beats as beats_mod
+
+
+class TestBeats(unittest.TestCase):
+    def test_registry_has_seven_unique_well_formed_beats(self):
+        beats = beats_mod.BEATS
+        self.assertEqual(len(beats), 7)
+        keys = [b.key for b in beats]
+        self.assertEqual(len(keys), len(set(keys)), "beat keys must be unique")
+        for b in beats:
+            self.assertTrue(b.narration_vi.strip(), f"{b.key} has empty narration")
+            self.assertGreater(b.anim_min_secs, 0, f"{b.key} anim_min must be > 0")
+            self.assertTrue(callable(b.scene_cls), f"{b.key} scene_cls not callable")
+
+
 if __name__ == "__main__":
     unittest.main()
