@@ -141,5 +141,54 @@ class TestAudioUtil(unittest.TestCase):
         self.assertTrue(run.called)
 
 
+from app.models.schema import VideoParams
+from app.services.mathflow import pipeline as pipeline_mod
+
+
+class TestPipeline(unittest.TestCase):
+    def test_start_orchestrates_beats_and_returns_video(self):
+        params = VideoParams(video_subject="x", flow_type="math_explainer")
+
+        with mock.patch.object(pipeline_mod, "utils") as utils_mock, \
+             mock.patch.object(pipeline_mod, "voice") as voice_mock, \
+             mock.patch.object(pipeline_mod, "render") as render_mock, \
+             mock.patch.object(pipeline_mod, "audioutil") as audio_mock, \
+             mock.patch.object(pipeline_mod, "video") as video_mock, \
+             mock.patch.object(pipeline_mod, "sm") as sm_mock:
+            with tempfile.TemporaryDirectory() as d:
+                utils_mock.task_dir.return_value = d
+                voice_mock.tts.return_value = object()  # non-None sub_maker
+                voice_mock.get_audio_duration.return_value = 8.0
+
+                def fake_render(beat, target_duration, out_dir, index):
+                    p = os.path.join(out_dir, f"beat-{index}.mp4")
+                    open(p, "wb").write(b"x")
+                    return p
+                render_mock.render_beat.side_effect = fake_render
+
+                def fake_pad(in_path, target_secs, out_path):
+                    open(out_path, "wb").write(b"a")
+                    return out_path
+                audio_mock.pad_audio_to.side_effect = fake_pad
+                audio_mock.concat_audio.side_effect = lambda files, out, output_dir: out
+
+                # voice.tts writes the audio file the pipeline checks for
+                def write_audio(text, voice_name, voice_rate, voice_file, voice_volume):
+                    open(voice_file, "wb").write(b"a")
+                    return object()
+                voice_mock.tts.side_effect = write_audio
+
+                result = pipeline_mod.start("task-1", params)
+
+        self.assertIn("videos", result)
+        self.assertEqual(len(result["videos"]), 1)
+        self.assertEqual(render_mock.render_beat.call_count, 7)
+        video_mock.generate_video.assert_called_once()
+        # narration defaulted to a Vietnamese voice
+        self.assertTrue(params.voice_name.startswith("vi-VN"))
+        # font forced to the bundled Vietnamese font
+        self.assertEqual(params.font_name, "DejaVuSans.ttf")
+
+
 if __name__ == "__main__":
     unittest.main()
