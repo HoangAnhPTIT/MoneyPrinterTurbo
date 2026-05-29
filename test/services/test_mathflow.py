@@ -53,5 +53,51 @@ class TestTiming(unittest.TestCase):
         self.assertEqual(timing.silence_padding(audio_dur=12.0, target=10.0), 0.0)
 
 
+import os
+import tempfile
+from unittest import mock
+from app.services.mathflow import render as render_mod
+
+
+class TestRender(unittest.TestCase):
+    def test_render_beat_invokes_scene_with_target_duration(self):
+        captured = {}
+
+        class FakeScene:
+            def __init__(self, target_duration):
+                captured["target_duration"] = target_duration
+
+            def render(self):
+                # emulate manim writing a file under media dir
+                path = captured["expected_src"]
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                open(path, "wb").write(b"x")
+
+            @property
+            def renderer(self):
+                m = mock.Mock()
+                m.file_writer.movie_file_path = captured["expected_src"]
+                return m
+
+        class FakeBeat:
+            scene_cls = FakeScene
+            key = "demo"
+
+        with tempfile.TemporaryDirectory() as d:
+            captured["expected_src"] = os.path.join(d, "media", "demo.mp4")
+            with mock.patch.object(render_mod, "_tempconfig_for", return_value=_nullctx()):
+                out = render_mod.render_beat(FakeBeat(), target_duration=7.5,
+                                             out_dir=d, index=2)
+            self.assertEqual(captured["target_duration"], 7.5)
+            self.assertTrue(out.endswith("beat-2.mp4"))
+            self.assertTrue(os.path.exists(out))
+
+
+import contextlib
+@contextlib.contextmanager
+def _nullctx():
+    yield
+
+
 if __name__ == "__main__":
     unittest.main()
