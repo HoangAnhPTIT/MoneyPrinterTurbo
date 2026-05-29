@@ -143,6 +143,7 @@ class TestAudioUtil(unittest.TestCase):
 
 from app.models.schema import VideoParams
 from app.services.mathflow import pipeline as pipeline_mod
+from app.services import task as task_mod
 
 
 class TestPipeline(unittest.TestCase):
@@ -188,6 +189,16 @@ class TestPipeline(unittest.TestCase):
         self.assertTrue(params.voice_name.startswith("vi-VN"))
         # font forced to the bundled Vietnamese font
         self.assertEqual(params.font_name, "DejaVuSans.ttf")
+
+
+class TestTaskBranch(unittest.TestCase):
+    def test_start_delegates_to_mathflow_when_flow_type_math(self):
+        params = VideoParams(video_subject="x", flow_type="math_explainer")
+        with mock.patch("app.services.mathflow.pipeline.start") as math_start:
+            math_start.return_value = {"videos": ["final-1.mp4"]}
+            result = task_mod.start("task-9", params)
+        math_start.assert_called_once()
+        self.assertEqual(result, {"videos": ["final-1.mp4"]})
 
 
 if __name__ == "__main__":
