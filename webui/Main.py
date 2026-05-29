@@ -526,6 +526,22 @@ params = VideoParams(video_subject="")
 uploaded_files = []
 uploaded_audio_file = None
 
+flow_label_map = {
+    "standard": tr("Standard short video"),
+    "math_explainer": tr("Math Explainer: Double Integral"),
+}
+flow_keys = list(flow_label_map.keys())
+selected_flow = st.selectbox(
+    tr("Flow"),
+    options=range(len(flow_keys)),
+    format_func=lambda i: flow_label_map[flow_keys[i]],
+    index=0,
+)
+params.flow_type = flow_keys[selected_flow]
+is_math_flow = params.flow_type == "math_explainer"
+if is_math_flow:
+    st.info(tr("Math Explainer flow: subject, script, keywords and video source are fixed and ignored."))
+
 with left_panel:
     with st.container(border=True):
         st.write(tr("Video Script Settings"))
@@ -533,6 +549,7 @@ with left_panel:
             tr("Video Subject"),
             value=st.session_state["video_subject"],
             key="video_subject_input",
+            disabled=is_math_flow,
         ).strip()
 
         video_languages = [
@@ -569,7 +586,8 @@ with left_panel:
                     st.session_state["video_script"] = script
                     st.session_state["video_terms"] = ", ".join(terms)
         params.video_script = st.text_area(
-            tr("Video Script"), value=st.session_state["video_script"], height=280
+            tr("Video Script"), value=st.session_state["video_script"], height=280,
+            disabled=is_math_flow,
         )
         if st.button(tr("Generate Video Keywords"), key="auto_generate_terms"):
             if not params.video_script:
@@ -584,7 +602,8 @@ with left_panel:
                     st.session_state["video_terms"] = ", ".join(terms)
 
         params.video_terms = st.text_area(
-            tr("Video Keywords"), value=st.session_state["video_terms"]
+            tr("Video Keywords"), value=st.session_state["video_terms"],
+            disabled=is_math_flow,
         )
 
 with middle_panel:
@@ -613,6 +632,7 @@ with middle_panel:
             options=range(len(video_sources)),
             format_func=lambda x: video_sources[x][0],
             index=saved_video_source_index,
+            disabled=is_math_flow,
         )
         params.video_source = video_sources[selected_index][1]
         config.app["video_source"] = params.video_source
@@ -1060,25 +1080,26 @@ start_button = st.button(tr("Generate Video"), use_container_width=True, type="p
 if start_button:
     config.save_config()
     task_id = str(uuid4())
-    if not params.video_subject and not params.video_script:
-        st.error(tr("Video Script and Subject Cannot Both Be Empty"))
-        scroll_to_bottom()
-        st.stop()
+    if not is_math_flow:
+        if not params.video_subject and not params.video_script:
+            st.error(tr("Video Script and Subject Cannot Both Be Empty"))
+            scroll_to_bottom()
+            st.stop()
 
-    if params.video_source not in ["pexels", "pixabay", "local"]:
-        st.error(tr("Please Select a Valid Video Source"))
-        scroll_to_bottom()
-        st.stop()
+        if params.video_source not in ["pexels", "pixabay", "local"]:
+            st.error(tr("Please Select a Valid Video Source"))
+            scroll_to_bottom()
+            st.stop()
 
-    if params.video_source == "pexels" and not config.app.get("pexels_api_keys", ""):
-        st.error(tr("Please Enter the Pexels API Key"))
-        scroll_to_bottom()
-        st.stop()
+        if params.video_source == "pexels" and not config.app.get("pexels_api_keys", ""):
+            st.error(tr("Please Enter the Pexels API Key"))
+            scroll_to_bottom()
+            st.stop()
 
-    if params.video_source == "pixabay" and not config.app.get("pixabay_api_keys", ""):
-        st.error(tr("Please Enter the Pixabay API Key"))
-        scroll_to_bottom()
-        st.stop()
+        if params.video_source == "pixabay" and not config.app.get("pixabay_api_keys", ""):
+            st.error(tr("Please Enter the Pixabay API Key"))
+            scroll_to_bottom()
+            st.stop()
 
     if uploaded_audio_file:
         task_dir = utils.task_dir(task_id)
