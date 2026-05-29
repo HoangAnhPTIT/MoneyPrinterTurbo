@@ -5,7 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from app.models.schema import VideoParams
-from app.services.mathflow import srt
+from app.services.mathflow import srt, timing
 
 
 class TestFlowType(unittest.TestCase):
@@ -41,6 +41,16 @@ class TestSrt(unittest.TestCase):
             srt.write_srt(cues, out)
             content = open(out, encoding="utf-8").read()
         self.assertIn("1\n00:00:00,000 --> 00:00:01,000\nhello", content)
+
+
+class TestTiming(unittest.TestCase):
+    def test_beat_duration_takes_the_longer(self):
+        self.assertEqual(timing.beat_duration(audio_dur=4.0, anim_min=10.0), 10.0)
+        self.assertEqual(timing.beat_duration(audio_dur=12.0, anim_min=10.0), 12.0)
+
+    def test_silence_padding_is_nonnegative(self):
+        self.assertEqual(timing.silence_padding(audio_dur=4.0, target=10.0), 6.0)
+        self.assertEqual(timing.silence_padding(audio_dur=12.0, target=10.0), 0.0)
 
 
 if __name__ == "__main__":
