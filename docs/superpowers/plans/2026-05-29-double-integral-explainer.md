@@ -2,7 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a hardcoded `math_explainer` flow to MoneyPrinterTurbo that renders a ~100s, 9:16 (720×1280) Vietnamese-narrated 3D explainer video about double integrals, reusing MPT's TTS, subtitle-burning, BGM, mux, task, API, and WebUI plumbing.
+**Goal:** Add a hardcoded `math_explainer` flow to MoneyPrinterTurbo that renders a ~100s, 9:16 (1080×1920) Vietnamese-narrated 3D explainer video about double integrals, reusing MPT's TTS, subtitle-burning, BGM, mux, task, API, and WebUI plumbing.
+
+> **Why 1080×1920 (not 720×1280):** `video.generate_video()` does not resize the input video; it uses `VideoAspect.portrait.to_resolution()` = 1080×1920 only to wrap and position the burned subtitles (`video.py:514-515,583`). The Manim render must match that resolution or the Vietnamese subtitles land off-screen.
 
 **Architecture:** A new `flow_type` field on `VideoParams` selects the flow. `task.start()` branches to a new `app/services/mathflow/` package. The flow generates per-beat Vietnamese TTS, renders one Manim scene per beat padded to the narration length, concatenates beat videos + audio, builds an SRT, and hands everything to the existing `video.generate_video()` for subtitle burning, BGM, and final mux.
 
@@ -283,23 +285,35 @@ git commit -m "feat: add per-beat timing math for mathflow"
 
 - [ ] **Step 1: Add `manim` to `pyproject.toml`**
 
-In `app/.../pyproject.toml`, inside the `dependencies = [ ... ]` list (lines 15-34), add this line after `"litellm==1.60.0",`:
+In the repo-root `pyproject.toml`, inside the `dependencies = [ ... ]` list (lines 15-34), add this line after `"litellm==1.60.0",`:
 ```python
-    "manim==0.18.1",
+    "manim>=0.18.1,<0.19",
 ```
+Rationale for the range (not an exact pin): Manim pulls heavy transitive deps (`numpy`, `scipy`, `pycairo`, `manimpango`, `pydub`, `pillow`) that already exist in this project's lock; a compatible-range pin lets the resolver pick versions that satisfy the existing constraints. `requires-python` is `>=3.11,<3.13`, which Manim 0.18.x supports.
 
 - [ ] **Step 2: Add `manim` to `requirements.txt`**
 
 Append to `requirements.txt`:
 ```
-manim==0.18.1
+manim>=0.18.1,<0.19
 ```
 
 - [ ] **Step 3: Install Manim and verify import**
 
-Run: `python -m pip install "manim==0.18.1"`
-Then: `python -c "import manim; print(manim.__version__)"`
-Expected: prints `0.18.1` (or the resolved patch). If install fails for missing system libs, install `libcairo2-dev libpango1.0-dev pkg-config` (Debian/Ubuntu) and retry. Document any extra step in the commit message.
+This project is `uv`-based (`uv.lock`). If `uv` is available, regenerate the lock and sync:
+```bash
+uv lock && uv sync
+```
+Otherwise fall back to pip:
+```bash
+python -m pip install "manim>=0.18.1,<0.19"
+```
+Then verify the import and that the resolver did not break existing pins:
+```bash
+python -c "import manim; print('manim', manim.__version__)"
+python -c "import moviepy, numpy, faster_whisper; print('existing deps still import')"
+```
+Expected: prints a `manim 0.18.x` version and `existing deps still import`. If `uv lock` reports an unsatisfiable resolution (a numpy/scipy conflict with the existing pins), widen or adjust the conflicting pin and note it in the commit message. If install fails for missing system libs, install `libcairo2-dev libpango1.0-dev pkg-config` (Debian/Ubuntu) and retry.
 
 - [ ] **Step 4: Bundle a Vietnamese-capable font**
 
@@ -322,6 +336,7 @@ Expected: prints `ok ('DejaVu Sans', 'Book')`.
 
 ```bash
 git add pyproject.toml requirements.txt resource/fonts/DejaVuSans.ttf
+git add uv.lock 2>/dev/null || true   # include if uv lock regenerated it
 git commit -m "build: add manim dependency and bundle Vietnamese font"
 ```
 
@@ -385,9 +400,15 @@ class TimedThreeDScene(ThreeDScene):
     def construct(self):
         self.camera.background_color = BLACK
         self.animate_body()
-        remaining = self.target_duration - self.renderer.time
+        remaining = self.target_duration - self._elapsed_seconds()
         if remaining > 0:
             self.wait(remaining)
+
+    def _elapsed_seconds(self) -> float:
+        # Manim CE accumulates elapsed scene time on the renderer. Guard with getattr so
+        # padding never crashes if the attribute name shifts across Manim versions; the
+        # Task 5 smoke test confirms the value is non-zero on the pinned 0.18 release.
+        return float(getattr(self.renderer, "time", 0.0) or 0.0)
 
     def animate_body(self):  # overridden by each beat
         raise NotImplementedError
@@ -553,7 +574,7 @@ Run:
 python - <<'PY'
 from manim import tempconfig
 from app.services.mathflow.scenes.double_integral import Surface3DScene
-with tempconfig({"pixel_width": 720, "pixel_height": 1280, "frame_rate": 15,
+with tempconfig({"pixel_width": 1080, "pixel_height": 1920, "frame_rate": 15,
                  "media_dir": "/tmp/mathflow_smoke", "disable_caching": True,
                  "verbosity": "ERROR"}):
     Surface3DScene(target_duration=6.0).render()
@@ -654,11 +675,15 @@ def _import_manim_tempconfig():
 
 
 def _tempconfig_for(out_dir: str, index: int):
-    """Return a Manim tempconfig context manager for a 9:16 720x1280 render."""
+    """Return a Manim tempconfig context manager for a 9:16 1080x1920 render.
+
+    Must match VideoAspect.portrait.to_resolution() (1080x1920) — video.generate_video
+    positions burned subtitles relative to that resolution and does not resize the input.
+    """
     tempconfig = _import_manim_tempconfig()
     settings = {
-        "pixel_width": 720,
-        "pixel_height": 1280,
+        "pixel_width": 1080,
+        "pixel_height": 1920,
         "frame_rate": 30,
         "background_color": "#000000",
         "media_dir": os.path.join(out_dir, "manim_media"),
@@ -1289,13 +1314,13 @@ Expected: completes without error and prints a dict containing `videos: ['.../fi
 
 - [ ] **Step 2: Inspect the output video**
 
-Verify the final video exists, is 720×1280, ~90–110s, has Vietnamese audio, and shows correctly-rendered Vietnamese subtitles (no tofu boxes):
+Verify the final video exists, is 1080×1920, ~90–110s, has Vietnamese audio, and shows correctly-rendered Vietnamese subtitles (no tofu boxes):
 ```bash
 python -c "from moviepy import VideoFileClip; import glob; \
 p=glob.glob('storage/tasks/e2e-doubleintegral/final-1.mp4')[0]; \
 c=VideoFileClip(p); print(p, c.size, round(c.duration,1))"
 ```
-Expected: prints the path, `[720, 1280]`, and a duration near 100s.
+Expected: prints the path, `[1080, 1920]`, and a duration near 100s.
 
 - [ ] **Step 3: Tune if needed**
 

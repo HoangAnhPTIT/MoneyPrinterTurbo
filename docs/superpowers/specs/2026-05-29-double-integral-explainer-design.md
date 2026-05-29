@@ -10,7 +10,7 @@
 
 ### Goal
 Add a second video-generation flow to MoneyPrinterTurbo that renders a ~100s, 9:16
-(720×1280) math-explainer video for the topic **double integrals**, with Vietnamese
+(1080×1920) math-explainer video for the topic **double integrals**, with Vietnamese
 narration and burned Vietnamese subtitles, reusing as much of the existing MPT pipeline
 (TTS, subtitle burning, BGM, muxing, task/state/API/WebUI plumbing) as possible.
 
@@ -103,10 +103,15 @@ subclass, anim_min_secs > 0, unique keys).
   LaTeX-upgrade seam.
 
 ### 4.3 `render.py`
-- `render_beat(beat, target_duration, out_dir) -> str` configures Manim
-  (`pixel_width=720, pixel_height=1280, frame_rate=30`, black background, output to
+- `render_beat(beat, target_duration, out_dir, index) -> str` configures Manim
+  (`pixel_width=1080, pixel_height=1920, frame_rate=30`, black background, output to
   `out_dir`) and renders `beat.scene_cls` to a silent mp4. Returns the mp4 path.
 - Raises a clear error with an install hint if `manim` import fails.
+- **Resolution must equal `VideoAspect.portrait.to_resolution()` (1080×1920).**
+  `video.generate_video()` does not resize the input video; it only uses that resolution
+  to wrap (`width*0.9`) and position (`height*0.95`) subtitles. Rendering at any other
+  size would push the burned Vietnamese subtitles off-screen. `frame_rate=30` matches the
+  module-level `fps=30` in `video.py`.
 
 ### 4.4 `pipeline.py::start(task_id, params, stop_at)`
 Mirrors the standard flow's state/progress contract.
@@ -118,7 +123,7 @@ For each `beat` in `BEATS` (progress updated incrementally):
 1. `voice.tts(text=beat.narration_vi, voice_name=params.voice_name, voice_rate=params.voice_rate, voice_file=beat_i.mp3, voice_volume=params.voice_volume)`.
 2. `audio_dur = voice.get_audio_duration(beat_i.mp3)`.
 3. `dur_i = max(audio_dur, beat.anim_min_secs)`.
-4. `render.render_beat(beat, target_duration=dur_i, out_dir=task_dir) -> beat_i.mp4`.
+4. `render.render_beat(beat, target_duration=dur_i, out_dir=task_dir, index=i+1) -> beat_i.mp4`.
 
 ### 5.2 Padding rule (keep A/V aligned per beat)
 Each beat occupies exactly `dur_i` on the final timeline:
@@ -132,7 +137,9 @@ Each beat occupies exactly `dur_i` on the final timeline:
 7. Build `subtitle.srt` from cumulative beat start/end times + `narration_vi`
    (one cue per beat for the MVP).
 8. `video.generate_video(video_path=scenes.mp4, audio_path=audio.mp3, subtitle_path=subtitle.srt, output_file=final-1.mp4, params=params)` — reuses MPT's subtitle burning, font/color/aspect handling, BGM, and final mux.
-9. Existing cross-post step (`upload_post`) runs unchanged if configured.
+9. Cross-posting (`upload_post`) is **deferred for the MVP** — the math pipeline does not
+   call it (the standard flow keeps it). Can be added later by mirroring the standard flow's
+   step 7 with a fixed Vietnamese title.
 
 ### 5.4 State & stop_at
 - Report `TASK_STATE_PROCESSING` with incremental `progress` across beats, then assembly.
@@ -189,3 +196,8 @@ Each beat occupies exactly `dur_i` on the final timeline:
   narration length; tunable because everything is hardcoded.
 - First Manim render in a fresh/Docker environment may need cairo/pango system libs;
   document in install notes.
+- Two distinct font paths: moviepy subtitle burning takes a TTF **file path**
+  (`resource/fonts/DejaVuSans.ttf`, bundled here), but Manim `Text(font="DejaVu Sans")`
+  resolves the font by **name via Pango/OS font cache**. The dev machine has DejaVu Sans
+  installed; in a container without it, register the bundled TTF (e.g.
+  `manimpango.register_font("resource/fonts/DejaVuSans.ttf")`) or install the OS package.
