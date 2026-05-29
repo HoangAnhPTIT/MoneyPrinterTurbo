@@ -114,5 +114,32 @@ class TestBeats(unittest.TestCase):
             self.assertTrue(callable(b.scene_cls), f"{b.key} scene_cls not callable")
 
 
+from app.services.mathflow import audioutil
+
+
+class TestAudioUtil(unittest.TestCase):
+    def test_pad_audio_to_builds_apad_command(self):
+        with mock.patch("app.services.mathflow.audioutil.subprocess.run") as run, \
+             mock.patch("app.services.mathflow.audioutil.video.get_ffmpeg_binary",
+                        return_value="ffmpeg"):
+            run.return_value = mock.Mock(returncode=0, stderr="", stdout="")
+            out = audioutil.pad_audio_to("in.mp3", target_secs=9.0, out_path="out.mp3")
+        self.assertEqual(out, "out.mp3")
+        cmd = run.call_args[0][0]
+        self.assertIn("apad", " ".join(cmd))
+        self.assertIn("9.0", " ".join(cmd))
+
+    def test_concat_audio_writes_list_and_runs_ffmpeg(self):
+        with tempfile.TemporaryDirectory() as d, \
+             mock.patch("app.services.mathflow.audioutil.subprocess.run") as run, \
+             mock.patch("app.services.mathflow.audioutil.video.get_ffmpeg_binary",
+                        return_value="ffmpeg"):
+            run.return_value = mock.Mock(returncode=0, stderr="", stdout="")
+            out = audioutil.concat_audio(["a.mp3", "b.mp3"],
+                                         os.path.join(d, "all.mp3"), output_dir=d)
+        self.assertTrue(out.endswith("all.mp3"))
+        self.assertTrue(run.called)
+
+
 if __name__ == "__main__":
     unittest.main()
