@@ -234,6 +234,28 @@ def delete_files(files: List[str] | str):
         except Exception as e:
             logger.debug(f"failed to delete file {file}: {str(e)}")
 
+
+def _resolve_bgm_file_path(song_dir: str, bgm_file: str) -> str:
+    # 背景音乐只允许读取 resource/songs 目录内的文件，避免用户输入任意路径后
+    # 被 MoviePy 打开。这里兼容两种常见输入：
+    # 1. output000.mp3：来自 BGM 列表或用户只填写文件名
+    # 2. ./resource/songs/output000.mp3：用户按项目目录结构填写的相对路径
+    # 两种写法最终都会再次通过 resource/songs 白名单校验，不能绕过目录限制。
+    try:
+        return file_security.resolve_path_within_directory(song_dir, bgm_file)
+    except ValueError as song_dir_exc:
+        if os.path.isabs(bgm_file):
+            raise song_dir_exc
+
+        project_relative_file = os.path.join(utils.root_dir(), bgm_file)
+        try:
+            return file_security.resolve_path_within_directory(
+                song_dir, project_relative_file
+            )
+        except ValueError as root_dir_exc:
+            raise ValueError(str(root_dir_exc)) from song_dir_exc
+
+
 def get_bgm_file(bgm_type: str = "random", bgm_file: str = ""):
     if not bgm_type:
         return ""
@@ -241,9 +263,7 @@ def get_bgm_file(bgm_type: str = "random", bgm_file: str = ""):
     if bgm_file:
         song_dir = utils.song_dir()
         try:
-            resolved_bgm_file = file_security.resolve_path_within_directory(
-                song_dir, bgm_file
-            )
+            resolved_bgm_file = _resolve_bgm_file_path(song_dir, bgm_file)
         except ValueError as exc:
             # API 请求里的 bgm_file 来自用户输入，不能直接把任意绝对路径交给
             # MoviePy 打开。这里强制限制到 resource/songs 目录，阻止读取
@@ -451,11 +471,16 @@ def combine_videos(
 
 
 def wrap_text(text, max_width, font="Arial", fontsize=60):
-    # Create ImageFont
+    # 字幕换行必须在真正创建 TextClip 前完成，否则 MoviePy 只会按原始文本
+    # 计算渲染区域。这里用 PIL 按当前字体和字号测量宽度，确保每一行都尽量
+    # 控制在视频可用宽度内，避免大字号或中文长句直接溢出画面。
     font = ImageFont.truetype(font, fontsize)
+    max_width = int(max_width)
 
     def get_text_size(inner_text):
         inner_text = inner_text.strip()
+        if not inner_text:
+            return 0, fontsize
         left, top, right, bottom = font.getbbox(inner_text)
         return right - left, bottom - top
 
@@ -463,44 +488,49 @@ def wrap_text(text, max_width, font="Arial", fontsize=60):
     if width <= max_width:
         return text, height
 
-    processed = True
+    def split_long_token(token):
+        # 当一个 token 本身就超宽时（常见于中文无空格长句，或英文超长单词），
+        # 退化为字符级拆分。关键点是：检测到 candidate 超宽时，先提交上一个
+        # 仍然合法的 current，再把当前字符放入下一行，不能把超宽字符塞回上一行。
+        lines = []
+        current = ""
+        for char in token:
+            candidate = f"{current}{char}"
+            candidate_width, _ = get_text_size(candidate)
+            if candidate_width <= max_width or not current:
+                current = candidate
+                continue
+            lines.append(current)
+            current = char
+        if current:
+            lines.append(current)
+        return lines
 
-    _wrapped_lines_ = []
+    lines = []
+    current = ""
     words = text.split(" ")
-    _txt_ = ""
     for word in words:
-        _before = _txt_
-        _txt_ += f"{word} "
-        _width, _height = get_text_size(_txt_)
-        if _width <= max_width:
+        candidate = f"{current} {word}".strip() if current else word
+        candidate_width, _ = get_text_size(candidate)
+        if candidate_width <= max_width:
+            current = candidate
             continue
-        else:
-            if _txt_.strip() == word.strip():
-                processed = False
-                break
-            _wrapped_lines_.append(_before)
-            _txt_ = f"{word} "
-    _wrapped_lines_.append(_txt_)
-    if processed:
-        _wrapped_lines_ = [line.strip() for line in _wrapped_lines_]
-        result = "\n".join(_wrapped_lines_).strip()
-        height = len(_wrapped_lines_) * height
-        return result, height
 
-    _wrapped_lines_ = []
-    chars = list(text)
-    _txt_ = ""
-    for word in chars:
-        _txt_ += word
-        _width, _height = get_text_size(_txt_)
-        if _width <= max_width:
-            continue
+        if current:
+            lines.append(current)
+
+        word_width, _ = get_text_size(word)
+        if word_width <= max_width:
+            current = word
         else:
-            _wrapped_lines_.append(_txt_)
-            _txt_ = ""
-    _wrapped_lines_.append(_txt_)
-    result = "\n".join(_wrapped_lines_).strip()
-    height = len(_wrapped_lines_) * height
+            lines.extend(split_long_token(word))
+            current = ""
+
+    if current:
+        lines.append(current)
+
+    result = "\n".join(line.strip() for line in lines if line.strip()).strip()
+    height = len(lines) * height
     return result, height
 
 
