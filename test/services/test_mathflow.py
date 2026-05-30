@@ -39,7 +39,8 @@ class TestSrt(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             out = os.path.join(d, "x.srt")
             srt.write_srt(cues, out)
-            content = open(out, encoding="utf-8").read()
+            with open(out, encoding="utf-8") as fh:
+                content = fh.read()
         self.assertIn("1\n00:00:00,000 --> 00:00:01,000\nhello", content)
 
 
@@ -71,7 +72,8 @@ class TestRender(unittest.TestCase):
                 # emulate manim writing a file under media dir
                 path = captured["expected_src"]
                 os.makedirs(os.path.dirname(path), exist_ok=True)
-                open(path, "wb").write(b"x")
+                with open(path, "wb") as fh:
+                    fh.write(b"x")
 
             @property
             def renderer(self):
@@ -163,19 +165,22 @@ class TestPipeline(unittest.TestCase):
 
                 def fake_render(beat, target_duration, out_dir, index):
                     p = os.path.join(out_dir, f"beat-{index}.mp4")
-                    open(p, "wb").write(b"x")
+                    with open(p, "wb") as fh:
+                        fh.write(b"x")
                     return p
                 render_mock.render_beat.side_effect = fake_render
 
                 def fake_pad(in_path, target_secs, out_path):
-                    open(out_path, "wb").write(b"a")
+                    with open(out_path, "wb") as fh:
+                        fh.write(b"a")
                     return out_path
                 audio_mock.pad_audio_to.side_effect = fake_pad
                 audio_mock.concat_audio.side_effect = lambda files, out, output_dir: out
 
                 # voice.tts writes the audio file the pipeline checks for
                 def write_audio(text, voice_name, voice_rate, voice_file, voice_volume):
-                    open(voice_file, "wb").write(b"a")
+                    with open(voice_file, "wb") as fh:
+                        fh.write(b"a")
                     return object()
                 voice_mock.tts.side_effect = write_audio
 
@@ -189,6 +194,51 @@ class TestPipeline(unittest.TestCase):
         self.assertTrue(params.voice_name.startswith("vi-VN"))
         # font forced to the bundled Vietnamese font
         self.assertEqual(params.font_name, "DejaVuSans.ttf")
+        # math flow forces portrait aspect so burned subtitles stay on-screen
+        self.assertEqual(params.video_aspect, "9:16")
+
+
+    def test_assembly_failure_marks_task_failed(self):
+        from app.models import const as const_mod
+        params = VideoParams(video_subject="x", flow_type="math_explainer")
+        with mock.patch.object(pipeline_mod, "utils") as utils_mock, \
+             mock.patch.object(pipeline_mod, "voice") as voice_mock, \
+             mock.patch.object(pipeline_mod, "render") as render_mock, \
+             mock.patch.object(pipeline_mod, "audioutil") as audio_mock, \
+             mock.patch.object(pipeline_mod, "video") as video_mock, \
+             mock.patch.object(pipeline_mod, "sm") as sm_mock:
+            with tempfile.TemporaryDirectory() as d:
+                utils_mock.task_dir.return_value = d
+                voice_mock.get_audio_duration.return_value = 8.0
+
+                def write_audio(text, voice_name, voice_rate, voice_file, voice_volume):
+                    with open(voice_file, "wb") as fh:
+                        fh.write(b"a")
+                    return object()
+                voice_mock.tts.side_effect = write_audio
+
+                def fake_render(beat, target_duration, out_dir, index):
+                    p = os.path.join(out_dir, f"beat-{index}.mp4")
+                    with open(p, "wb") as fh:
+                        fh.write(b"x")
+                    return p
+                render_mock.render_beat.side_effect = fake_render
+
+                def fake_pad(in_path, target_secs, out_path):
+                    with open(out_path, "wb") as fh:
+                        fh.write(b"a")
+                    return out_path
+                audio_mock.pad_audio_to.side_effect = fake_pad
+                audio_mock.concat_audio.side_effect = lambda files, out, output_dir: out
+                video_mock.generate_video.side_effect = RuntimeError("mux boom")
+
+                result = pipeline_mod.start("task-fail", params)
+
+        self.assertIsNone(result)
+        states = [c.kwargs.get("state")
+                  for c in sm_mock.state.update_task.call_args_list
+                  if "state" in c.kwargs]
+        self.assertIn(const_mod.TASK_STATE_FAILED, states)
 
 
 class TestTaskBranch(unittest.TestCase):

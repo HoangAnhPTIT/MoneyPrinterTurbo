@@ -2,8 +2,6 @@ import os
 import subprocess
 from typing import List
 
-from loguru import logger
-
 from app.services import video
 
 

@@ -691,6 +691,7 @@ with middle_panel:
             format_func=lambda x: video_aspect_ratios[x][
                 0
             ],  # The label is displayed to the user
+            disabled=is_math_flow,
         )
         params.video_aspect = VideoAspect(video_aspect_ratios[selected_index][1])
 

@@ -3,6 +3,7 @@ import os
 from loguru import logger
 
 from app.models import const
+from app.models.schema import VideoAspect
 from app.services import video, voice
 from app.services import state as sm
 from app.services.mathflow import audioutil, render
@@ -20,10 +21,18 @@ def _apply_defaults(params):
         params.voice_name = DEFAULT_VI_VOICE
     # Vietnamese subtitles require a diacritics-capable font; force the bundled one.
     params.font_name = DEFAULT_VI_FONT
+    # Manim always renders at 1080x1920; video.generate_video positions burned subtitles
+    # using the aspect's resolution and does not resize, so force portrait to keep the
+    # subtitles on-screen regardless of the WebUI ratio selector.
+    params.video_aspect = VideoAspect.portrait.value
 
 
 def start(task_id, params, stop_at: str = "video"):
     logger.info(f"start math_explainer task: {task_id}")
+    if stop_at != "video":
+        logger.warning(
+            f"math_explainer: stop_at='{stop_at}' is not supported and will be ignored"
+        )
     _apply_defaults(params)
     sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING, progress=5)
 
@@ -50,16 +59,15 @@ def start(task_id, params, stop_at: str = "video"):
         audio_dur = voice.get_audio_duration(raw_audio)
         target = timing.beat_duration(audio_dur, beat.anim_min_secs)
 
+        padded_audio = os.path.join(task_path, f"beat-{index}.mp3")
         try:
             beat_video = render.render_beat(beat, target_duration=target,
                                             out_dir=task_path, index=index)
+            audioutil.pad_audio_to(raw_audio, target_secs=target, out_path=padded_audio)
         except Exception as exc:
             sm.state.update_task(task_id, state=const.TASK_STATE_FAILED)
-            logger.error(f"math beat '{beat.key}' render failed: {exc}")
+            logger.error(f"math beat '{beat.key}' render/pad failed: {exc}")
             return
-
-        padded_audio = os.path.join(task_path, f"beat-{index}.mp3")
-        audioutil.pad_audio_to(raw_audio, target_secs=target, out_path=padded_audio)
 
         beat_videos.append(beat_video)
         beat_audios.append(padded_audio)
@@ -67,26 +75,31 @@ def start(task_id, params, stop_at: str = "video"):
 
         sm.state.update_task(task_id, progress=5 + int(70 * index / len(BEATS)))
 
-    scenes_video = os.path.join(task_path, "scenes.mp4")
-    video.concat_video_clips_with_ffmpeg(
-        beat_videos, scenes_video, threads=params.n_threads, output_dir=task_path)
+    try:
+        scenes_video = os.path.join(task_path, "scenes.mp4")
+        video.concat_video_clips_with_ffmpeg(
+            beat_videos, scenes_video, threads=params.n_threads, output_dir=task_path)
 
-    full_audio = os.path.join(task_path, "audio.mp3")
-    audioutil.concat_audio(beat_audios, full_audio, output_dir=task_path)
+        full_audio = os.path.join(task_path, "audio.mp3")
+        audioutil.concat_audio(beat_audios, full_audio, output_dir=task_path)
 
-    subtitle_path = os.path.join(task_path, "subtitle.srt")
-    srt_mod.write_srt(srt_mod.build_cues(segments), subtitle_path)
+        subtitle_path = os.path.join(task_path, "subtitle.srt")
+        srt_mod.write_srt(srt_mod.build_cues(segments), subtitle_path)
 
-    sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING, progress=85)
+        sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING, progress=85)
 
-    final_video = os.path.join(task_path, "final-1.mp4")
-    video.generate_video(
-        video_path=scenes_video,
-        audio_path=full_audio,
-        subtitle_path=subtitle_path,
-        output_file=final_video,
-        params=params,
-    )
+        final_video = os.path.join(task_path, "final-1.mp4")
+        video.generate_video(
+            video_path=scenes_video,
+            audio_path=full_audio,
+            subtitle_path=subtitle_path,
+            output_file=final_video,
+            params=params,
+        )
+    except Exception as exc:
+        sm.state.update_task(task_id, state=const.TASK_STATE_FAILED)
+        logger.error(f"math_explainer assembly failed: {exc}")
+        return
 
     kwargs = {
         "videos": [final_video],

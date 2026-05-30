@@ -7,7 +7,7 @@ Formulas use unicode Text via formula() — the single LaTeX-upgrade seam.
 import numpy as np
 from manim import (
     ThreeDScene, ThreeDAxes, Surface, Text, Prism, Rectangle, VGroup,
-    Create, FadeIn, FadeOut, Write, BLACK, WHITE, YELLOW, PINK, TEAL,
+    Create, FadeIn, Write, BLACK, WHITE, YELLOW, PINK, TEAL,
     DEGREES, UP, RIGHT, ORIGIN,
 )
 
