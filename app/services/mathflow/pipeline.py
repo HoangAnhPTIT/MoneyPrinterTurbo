@@ -88,6 +88,18 @@ def start(task_id, params, stop_at: str = "video"):
 
         sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING, progress=85)
 
+        _encode_logged = {"pct": -10}
+
+        def _encode_progress(pct):
+            # The final encode is the longest silent step; map its 0-100 onto the
+            # 85-99 band so the UI progress bar keeps moving instead of freezing at 85.
+            sm.state.update_task(task_id, progress=85 + int(14 * pct / 100))
+            # The WebUI advances its bar off log lines, and the encode emits none on its
+            # own — so log a throttled line (~every 10%) to keep the bar moving here too.
+            if pct >= _encode_logged["pct"] + 10 or pct >= 100:
+                _encode_logged["pct"] = pct
+                logger.info(f"encoding final video: {pct}%")
+
         final_video = os.path.join(task_path, "final-1.mp4")
         video.generate_video(
             video_path=scenes_video,
@@ -95,6 +107,7 @@ def start(task_id, params, stop_at: str = "video"):
             subtitle_path=subtitle_path,
             output_file=final_video,
             params=params,
+            progress_callback=_encode_progress,
         )
     except Exception as exc:
         sm.state.update_task(task_id, state=const.TASK_STATE_FAILED)

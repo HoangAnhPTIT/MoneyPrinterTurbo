@@ -33,6 +33,42 @@ from app.models.schema import (
 from app.services.utils import video_effects
 from app.utils import file_security, utils
 
+try:
+    from proglog import ProgressBarLogger
+except Exception:  # pragma: no cover - proglog ships with moviepy
+    ProgressBarLogger = None
+
+
+class _CallbackProgressLogger(ProgressBarLogger if ProgressBarLogger else object):
+    """Forward MoviePy's encode progress to a ``callback(percent: int)``.
+
+    MoviePy reports progress through proglog; ``write_videofile(logger=None)`` silences
+    it, which made the final encode look frozen in the UI. This bridge maps the active
+    bar's frame index to a 0-100 percent and only fires when the integer percent
+    advances, so we don't spam state/log updates on every frame.
+    """
+
+    def __init__(self, callback):
+        super().__init__()
+        self._callback = callback
+        self._last_pct = -1
+
+    def bars_callback(self, bar, attr, value, old_value=None):
+        if attr != "index":
+            return
+        total = (self.bars.get(bar) or {}).get("total") or 0
+        if total <= 0:
+            return
+        pct = int(100 * value / total)
+        if pct != self._last_pct:
+            self._last_pct = pct
+            try:
+                self._callback(pct)
+            except Exception:
+                # Progress reporting must never break the encode.
+                pass
+
+
 class SubClippedVideoClip:
     def __init__(self, file_path, start_time=None, end_time=None, width=None, height=None, duration=None):
         self.file_path = file_path
@@ -510,6 +546,7 @@ def generate_video(
     subtitle_path: str,
     output_file: str,
     params: VideoParams,
+    progress_callback=None,
 ):
     aspect = VideoAspect(params.video_aspect)
     video_width, video_height = aspect.to_resolution()
@@ -637,6 +674,11 @@ def generate_video(
     # 显式沿用输入音频的采样率；如果取不到，再回退到 MoviePy 默认的 44100Hz。
     # 这样可以减少不同运行环境，尤其是 Docker 环境中再次重采样带来的音质波动。
     output_audio_fps = int(getattr(audio_clip, "fps", 0) or 44100)
+    # Bridge MoviePy's encode progress into the optional callback so callers (and the
+    # WebUI progress bar) can see this otherwise-silent step advancing.
+    encode_logger = None
+    if progress_callback is not None and ProgressBarLogger is not None:
+        encode_logger = _CallbackProgressLogger(progress_callback)
     video_clip.write_videofile(
         output_file,
         audio_codec=audio_codec,
@@ -644,7 +686,7 @@ def generate_video(
         audio_bitrate=audio_bitrate,
         temp_audiofile_path=output_dir,
         threads=params.n_threads or 2,
-        logger=None,
+        logger=encode_logger,
         fps=fps,
     )
     video_clip.close()

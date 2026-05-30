@@ -16,6 +16,12 @@ SURFACE_COLOR = TEAL
 HIGHLIGHT = YELLOW
 COLUMN_COLOR = PINK
 
+# Khung 9:16 rất hẹp theo chiều ngang nên nội dung 3D mặc định bị co nhỏ,
+# để lại nhiều khoảng đen trên/dưới. Phóng to camera để mô phỏng lấp đầy
+# khung hơn. Chỉ ảnh hưởng nội dung 3D — các label dùng add_fixed_in_frame_mobjects
+# nằm ở lớp 2D nên không bị ảnh hưởng. Tăng/giảm giá trị này để chỉnh độ lớn.
+CAMERA_ZOOM = 1.7
+
 
 def f(x, y):
     """The explainer surface z = e^{-(x^2 + y^2)}."""
@@ -70,7 +76,7 @@ class Intro1DScene(TimedThreeDScene):
     """Beat 1: the single (1D) integral as area under a curve."""
 
     def animate_body(self):
-        self.set_camera_orientation(phi=0, theta=-90 * DEGREES)
+        self.set_camera_orientation(phi=0, theta=-90 * DEGREES, zoom=CAMERA_ZOOM)
         axes = self.make_axes()
         self.play(Create(axes), run_time=2)
         label = formula("∫ f(x) dx  —  diện tích dưới đường cong", size=34)
@@ -84,7 +90,7 @@ class Surface3DScene(TimedThreeDScene):
     """Beat 2: introduce the 3D surface z = f(x, y)."""
 
     def animate_body(self):
-        self.set_camera_orientation(phi=70 * DEGREES, theta=-45 * DEGREES)
+        self.set_camera_orientation(phi=70 * DEGREES, theta=-45 * DEGREES, zoom=CAMERA_ZOOM)
         axes = self.make_axes()
         surface = self.make_surface(axes)
         self.play(Create(axes), run_time=2)
@@ -101,7 +107,7 @@ class CellDAScene(TimedThreeDScene):
     """Beat 3: highlight a small area cell dA = dx·dy on the xy-plane."""
 
     def animate_body(self):
-        self.set_camera_orientation(phi=65 * DEGREES, theta=-45 * DEGREES)
+        self.set_camera_orientation(phi=65 * DEGREES, theta=-45 * DEGREES, zoom=CAMERA_ZOOM)
         axes = self.make_axes()
         surface = self.make_surface(axes)
         self.add(axes, surface)
@@ -120,7 +126,7 @@ class VolumeColumnScene(TimedThreeDScene):
     """Beat 4: build one small volume column f(x,y)·dA up to the surface."""
 
     def animate_body(self):
-        self.set_camera_orientation(phi=65 * DEGREES, theta=-45 * DEGREES)
+        self.set_camera_orientation(phi=65 * DEGREES, theta=-45 * DEGREES, zoom=CAMERA_ZOOM)
         axes = self.make_axes()
         surface = self.make_surface(axes)
         self.add(axes, surface)
@@ -140,7 +146,7 @@ class RiemannSumScene(TimedThreeDScene):
     """Beat 5: many columns — V ≈ ΣΣ f(x,y)ΔA."""
 
     def animate_body(self):
-        self.set_camera_orientation(phi=65 * DEGREES, theta=-45 * DEGREES)
+        self.set_camera_orientation(phi=65 * DEGREES, theta=-45 * DEGREES, zoom=CAMERA_ZOOM)
         axes = self.make_axes()
         self.add(axes)
         columns = VGroup()
@@ -166,7 +172,7 @@ class SliceScene(TimedThreeDScene):
     """Beat 6: a slice plane swept across x — the iterated integral."""
 
     def animate_body(self):
-        self.set_camera_orientation(phi=70 * DEGREES, theta=-50 * DEGREES)
+        self.set_camera_orientation(phi=70 * DEGREES, theta=-50 * DEGREES, zoom=CAMERA_ZOOM)
         axes = self.make_axes()
         surface = self.make_surface(axes)
         self.add(axes, surface)
@@ -187,7 +193,7 @@ class ConclusionScene(TimedThreeDScene):
     """Beat 7: V = ∬_D f(x,y) dA."""
 
     def animate_body(self):
-        self.set_camera_orientation(phi=65 * DEGREES, theta=-45 * DEGREES)
+        self.set_camera_orientation(phi=65 * DEGREES, theta=-45 * DEGREES, zoom=CAMERA_ZOOM)
         axes = self.make_axes()
         surface = self.make_surface(axes)
         self.play(Create(surface), run_time=2)

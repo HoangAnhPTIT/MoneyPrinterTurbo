@@ -23,6 +23,7 @@ from app.models.schema import (
     VideoTransitionMode,
 )
 from app.services import llm, voice
+from app.services import state as sm
 from app.services import task as tm
 from app.utils import utils
 
@@ -1146,15 +1147,26 @@ if start_button:
             if m.url:
                 params.video_materials.append(m)
 
+    progress_bar = st.progress(0, text=tr("Generating Video"))
     log_container = st.empty()
     log_records = []
 
     def log_received(msg):
-        if config.ui["hide_log"]:
-            return
-        with log_container:
+        # Runs synchronously on the main (script) thread because tm.start below runs
+        # here, not in a background thread. That keeps every st.* call on the script
+        # thread — updating the bar from a long-held polling loop or a worker thread
+        # corrupts Streamlit's element tree ("Bad 'setIn' index"). We piggyback on each
+        # log line to also advance the bar by reading the task's progress from state.
+        if not config.ui["hide_log"]:
             log_records.append(msg)
-            st.code("\n".join(log_records))
+            with log_container:
+                st.code("\n".join(log_records))
+        task_info = sm.state.get_task(task_id) or {}
+        pct = min(int(task_info.get("progress", 0) or 0), 100)
+        try:
+            progress_bar.progress(pct, text=f"{tr('Generating Video')} ... {pct}%")
+        except Exception:
+            pass
 
     logger.add(log_received)
 
@@ -1165,10 +1177,13 @@ if start_button:
 
     result = tm.start(task_id=task_id, params=params)
     if not result or "videos" not in result:
+        progress_bar.empty()
         st.error(tr("Video Generation Failed"))
         logger.error(tr("Video Generation Failed"))
         scroll_to_bottom()
         st.stop()
+
+    progress_bar.progress(100, text=f"{tr('Generating Video')} ... 100%")
 
     video_files = result.get("videos", [])
     st.success(tr("Video Generation Completed"))
