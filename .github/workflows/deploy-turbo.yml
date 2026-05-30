@@ -1,0 +1,132 @@
+name: Deploy Turbo
+
+# Deploys THIS repo (our MoneyPrinterTurbo fork) — not upstream. The workflow
+# rsyncs our source to the server and builds it there, behind nginx Basic Auth
+# at turbo.callmaster.site.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-turbo-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: rsync our source + build + nginx
+    runs-on: ubuntu-latest
+    env:
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_PORT: ${{ vars.SSH_PORT || '22' }}
+      SSH_USER: ${{ vars.SSH_USER || 'root' }}
+      DEPLOY_PATH: ${{ vars.TURBO_DEPLOY_PATH || '/opt/turbo' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Load SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Pin server host key
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -p "$SSH_PORT" "$SSH_HOST" >> ~/.ssh/known_hosts
+
+      - name: Ensure deploy + storage directories
+        run: |
+          ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "
+            mkdir -p '$DEPLOY_PATH' '$DEPLOY_PATH/storage' '$DEPLOY_PATH/src' &&
+            chmod 777 '$DEPLOY_PATH/storage'
+          "
+
+      - name: Rsync deploy kit (compose, gen_config, nginx setup)
+        run: |
+          rsync -avz --delete \
+            --exclude 'config.toml' \
+            --exclude 'storage/' \
+            --exclude 'src/' \
+            -e "ssh -p $SSH_PORT" \
+            ./deploy/ "$SSH_USER@$SSH_HOST:$DEPLOY_PATH/"
+
+      - name: Rsync our source into src/
+        run: |
+          rsync -avz --delete \
+            --exclude '.git/' \
+            --exclude 'storage/' \
+            --exclude 'config.toml' \
+            --exclude 'deploy/' \
+            --exclude '.github/' \
+            --exclude '__pycache__/' \
+            --exclude '.pytest_cache/' \
+            --exclude '.venv/' \
+            --exclude '*.verify*' \
+            --exclude '.audit_out.txt' \
+            -e "ssh -p $SSH_PORT" \
+            ./ "$SSH_USER@$SSH_HOST:$DEPLOY_PATH/src/"
+
+      - name: Write config.toml from our config.example + secrets
+        env:
+          TURBO_DEEPSEEK_API_KEY: ${{ secrets.TURBO_DEEPSEEK_API_KEY }}
+          TURBO_PEXELS_API_KEY: ${{ secrets.TURBO_PEXELS_API_KEY }}
+        run: |
+          ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
+            "DEPLOY_PATH='$DEPLOY_PATH' \
+             TURBO_DEEPSEEK_API_KEY='$TURBO_DEEPSEEK_API_KEY' \
+             TURBO_PEXELS_API_KEY='$TURBO_PEXELS_API_KEY' \
+             python3 '$DEPLOY_PATH/gen_config.py'"
+
+      - name: Build & start (turbo compose only)
+        run: |
+          ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
+            "cd '$DEPLOY_PATH' && docker compose -f docker-compose.turbo.yml up -d --build"
+
+      - name: Wait for WebUI on loopback
+        run: |
+          ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "
+            for i in \$(seq 1 30); do
+              if curl -sf -o /dev/null http://127.0.0.1:8501/; then echo ready after \${i}0s; exit 0; fi
+              sleep 5
+            done
+            echo 'WebUI did not come up'; docker logs --tail 50 moneyprinterturbo-webui; exit 1
+          "
+
+      - name: Configure nginx reverse proxy + HTTPS + Basic Auth
+        if: ${{ vars.TURBO_DOMAIN != '' }}
+        env:
+          TURBO_DOMAIN: ${{ vars.TURBO_DOMAIN }}
+          LETSENCRYPT_EMAIL: ${{ secrets.LETSENCRYPT_EMAIL }}
+          NGINX_PROJECT_DIR: ${{ vars.NGINX_PROJECT_DIR }}
+          NGINX_CONTAINER: ${{ vars.NGINX_CONTAINER }}
+          NGINX_CONF_DIR: ${{ vars.NGINX_CONF_DIR || '/opt/callmaster/nginx' }}
+          TURBO_BASIC_AUTH_USER: ${{ secrets.TURBO_BASIC_AUTH_USER }}
+          TURBO_BASIC_AUTH_PASS: ${{ secrets.TURBO_BASIC_AUTH_PASS }}
+        run: |
+          ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
+            "TURBO_DOMAIN='$TURBO_DOMAIN' \
+             LETSENCRYPT_EMAIL='$LETSENCRYPT_EMAIL' \
+             NGINX_PROJECT_DIR='$NGINX_PROJECT_DIR' \
+             NGINX_CONTAINER='$NGINX_CONTAINER' \
+             NGINX_CONF_DIR='$NGINX_CONF_DIR' \
+             TURBO_BASIC_AUTH_USER='$TURBO_BASIC_AUTH_USER' \
+             TURBO_BASIC_AUTH_PASS='$TURBO_BASIC_AUTH_PASS' \
+             bash '$DEPLOY_PATH/setup_turbo_proxy.sh'"
+
+      - name: Smoke-test HTTPS + auth enforcement
+        if: ${{ vars.TURBO_DOMAIN != '' }}
+        env:
+          TURBO_DOMAIN: ${{ vars.TURBO_DOMAIN }}
+          TURBO_BASIC_AUTH_USER: ${{ secrets.TURBO_BASIC_AUTH_USER }}
+          TURBO_BASIC_AUTH_PASS: ${{ secrets.TURBO_BASIC_AUTH_PASS }}
+        run: |
+          sleep 5
+          NOAUTH=$(curl -sk -o /dev/null -w '%{http_code}' "https://$TURBO_DOMAIN/" || echo 000)
+          echo "no-creds → HTTP $NOAUTH (expect 401)"
+          [ "$NOAUTH" = "401" ] || { echo "FAIL: auth not enforced"; exit 1; }
+          AUTH=$(curl -sk -o /dev/null -w '%{http_code}' \
+            -u "$TURBO_BASIC_AUTH_USER:$TURBO_BASIC_AUTH_PASS" "https://$TURBO_DOMAIN/" || echo 000)
+          echo "with-creds → HTTP $AUTH (expect 200/302)"
+          case "$AUTH" in 200|301|302|307) echo OK ;; *) echo "FAIL: $AUTH"; exit 1 ;; esac

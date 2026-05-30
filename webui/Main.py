@@ -23,6 +23,7 @@ from app.models.schema import (
     VideoTransitionMode,
 )
 from app.services import llm, voice
+from app.services import state as sm
 from app.services import task as tm
 from app.utils import utils
 
@@ -526,6 +527,22 @@ params = VideoParams(video_subject="")
 uploaded_files = []
 uploaded_audio_file = None
 
+flow_label_map = {
+    "standard": tr("Standard short video"),
+    "math_explainer": tr("Math Explainer: Double Integral"),
+}
+flow_keys = list(flow_label_map.keys())
+selected_flow = st.selectbox(
+    tr("Flow"),
+    options=range(len(flow_keys)),
+    format_func=lambda i: flow_label_map[flow_keys[i]],
+    index=0,
+)
+params.flow_type = flow_keys[selected_flow]
+is_math_flow = params.flow_type == "math_explainer"
+if is_math_flow:
+    st.info(tr("Math Explainer flow: subject, script, keywords and video source are fixed and ignored."))
+
 with left_panel:
     with st.container(border=True):
         st.write(tr("Video Script Settings"))
@@ -533,6 +550,7 @@ with left_panel:
             tr("Video Subject"),
             value=st.session_state["video_subject"],
             key="video_subject_input",
+            disabled=is_math_flow,
         ).strip()
 
         video_languages = [
@@ -569,7 +587,8 @@ with left_panel:
                     st.session_state["video_script"] = script
                     st.session_state["video_terms"] = ", ".join(terms)
         params.video_script = st.text_area(
-            tr("Video Script"), value=st.session_state["video_script"], height=280
+            tr("Video Script"), value=st.session_state["video_script"], height=280,
+            disabled=is_math_flow,
         )
         if st.button(tr("Generate Video Keywords"), key="auto_generate_terms"):
             if not params.video_script:
@@ -584,7 +603,8 @@ with left_panel:
                     st.session_state["video_terms"] = ", ".join(terms)
 
         params.video_terms = st.text_area(
-            tr("Video Keywords"), value=st.session_state["video_terms"]
+            tr("Video Keywords"), value=st.session_state["video_terms"],
+            disabled=is_math_flow,
         )
 
 with middle_panel:
@@ -613,6 +633,7 @@ with middle_panel:
             options=range(len(video_sources)),
             format_func=lambda x: video_sources[x][0],
             index=saved_video_source_index,
+            disabled=is_math_flow,
         )
         params.video_source = video_sources[selected_index][1]
         config.app["video_source"] = params.video_source
@@ -671,6 +692,7 @@ with middle_panel:
             format_func=lambda x: video_aspect_ratios[x][
                 0
             ],  # The label is displayed to the user
+            disabled=is_math_flow,
         )
         params.video_aspect = VideoAspect(video_aspect_ratios[selected_index][1])
 
@@ -1063,25 +1085,26 @@ start_button = st.button(tr("Generate Video"), use_container_width=True, type="p
 if start_button:
     config.save_config()
     task_id = str(uuid4())
-    if not params.video_subject and not params.video_script:
-        st.error(tr("Video Script and Subject Cannot Both Be Empty"))
-        scroll_to_bottom()
-        st.stop()
+    if not is_math_flow:
+        if not params.video_subject and not params.video_script:
+            st.error(tr("Video Script and Subject Cannot Both Be Empty"))
+            scroll_to_bottom()
+            st.stop()
 
-    if params.video_source not in ["pexels", "pixabay", "local"]:
-        st.error(tr("Please Select a Valid Video Source"))
-        scroll_to_bottom()
-        st.stop()
+        if params.video_source not in ["pexels", "pixabay", "local"]:
+            st.error(tr("Please Select a Valid Video Source"))
+            scroll_to_bottom()
+            st.stop()
 
-    if params.video_source == "pexels" and not config.app.get("pexels_api_keys", ""):
-        st.error(tr("Please Enter the Pexels API Key"))
-        scroll_to_bottom()
-        st.stop()
+        if params.video_source == "pexels" and not config.app.get("pexels_api_keys", ""):
+            st.error(tr("Please Enter the Pexels API Key"))
+            scroll_to_bottom()
+            st.stop()
 
-    if params.video_source == "pixabay" and not config.app.get("pixabay_api_keys", ""):
-        st.error(tr("Please Enter the Pixabay API Key"))
-        scroll_to_bottom()
-        st.stop()
+        if params.video_source == "pixabay" and not config.app.get("pixabay_api_keys", ""):
+            st.error(tr("Please Enter the Pixabay API Key"))
+            scroll_to_bottom()
+            st.stop()
 
     if uploaded_audio_file:
         task_dir = utils.task_dir(task_id)
@@ -1127,15 +1150,26 @@ if start_button:
             if m.url:
                 params.video_materials.append(m)
 
+    progress_bar = st.progress(0, text=tr("Generating Video"))
     log_container = st.empty()
     log_records = []
 
     def log_received(msg):
-        if config.ui["hide_log"]:
-            return
-        with log_container:
+        # Runs synchronously on the main (script) thread because tm.start below runs
+        # here, not in a background thread. That keeps every st.* call on the script
+        # thread — updating the bar from a long-held polling loop or a worker thread
+        # corrupts Streamlit's element tree ("Bad 'setIn' index"). We piggyback on each
+        # log line to also advance the bar by reading the task's progress from state.
+        if not config.ui["hide_log"]:
             log_records.append(msg)
-            st.code("\n".join(log_records))
+            with log_container:
+                st.code("\n".join(log_records))
+        task_info = sm.state.get_task(task_id) or {}
+        pct = min(int(task_info.get("progress", 0) or 0), 100)
+        try:
+            progress_bar.progress(pct, text=f"{tr('Generating Video')} ... {pct}%")
+        except Exception:
+            pass
 
     logger.add(log_received)
 
@@ -1146,10 +1180,13 @@ if start_button:
 
     result = tm.start(task_id=task_id, params=params)
     if not result or "videos" not in result:
+        progress_bar.empty()
         st.error(tr("Video Generation Failed"))
         logger.error(tr("Video Generation Failed"))
         scroll_to_bottom()
         st.stop()
+
+    progress_bar.progress(100, text=f"{tr('Generating Video')} ... 100%")
 
     video_files = result.get("videos", [])
     st.success(tr("Video Generation Completed"))

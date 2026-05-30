@@ -71,6 +71,7 @@ class VideoParams(BaseModel):
     """
 
     video_subject: str
+    flow_type: Optional[str] = "standard"  # "standard" | "math_explainer"
     video_script: str = ""  # Script used to generate the video
     video_terms: Optional[str | list] = None  # Keywords used to generate the video
     video_aspect: Optional[VideoAspect] = VideoAspect.portrait.value

@@ -1,0 +1,26 @@
+services:
+  webui:
+    build:
+      context: ./src          # OUR repo source, rsync'd here by deploy-turbo.yml
+      dockerfile: Dockerfile
+    image: moneyprinterturbo-webui:ours
+    container_name: moneyprinterturbo-webui
+    restart: unless-stopped
+    # Loopback only — callmaster-nginx reverse-proxies HTTPS at turbo.callmaster.site.
+    # Anyone hitting the public IP on 8501 cannot reach Streamlit directly.
+    ports:
+      - "127.0.0.1:8501:8501"
+    volumes:
+      # Mount config + storage only; the code lives in the built image.
+      - ./config.toml:/MoneyPrinterTurbo/config.toml
+      - ./storage:/MoneyPrinterTurbo/storage
+    command:
+      - streamlit
+      - run
+      - ./webui/Main.py
+      - --server.address=0.0.0.0
+      - --server.port=8501
+      - --server.headless=true
+      - --browser.serverAddress=turbo.callmaster.site
+      - --server.enableCORS=true
+      - --browser.gatherUsageStats=false

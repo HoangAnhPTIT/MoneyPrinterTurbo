@@ -247,6 +247,9 @@ def generate_final_videos(
 
 def start(task_id, params: VideoParams, stop_at: str = "video"):
     logger.info(f"start task: {task_id}, stop_at: {stop_at}")
+    if getattr(params, "flow_type", "standard") == "math_explainer":
+        from app.services.mathflow import pipeline as mathflow_pipeline
+        return mathflow_pipeline.start(task_id, params, stop_at=stop_at)
     sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING, progress=5)
 
     # 1. Generate script

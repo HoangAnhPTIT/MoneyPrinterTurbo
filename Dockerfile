@@ -18,7 +18,12 @@ RUN echo "deb http://mirrors.aliyun.com/debian bullseye main" > /etc/apt/sources
             apt-get update && apt-get install -y --no-install-recommends \
                 git \
                 imagemagick \
-                ffmpeg && break || \
+                ffmpeg \
+                build-essential \
+                pkg-config \
+                python3-dev \
+                libcairo2-dev \
+                libpango1.0-dev && break || \
             echo "Attempt $i failed, retrying..."; \
             if [ $i -eq 3 ]; then \
                 echo "Aliyun mirror failed, switching to Tsinghua mirror"; \
@@ -28,7 +33,12 @@ RUN echo "deb http://mirrors.aliyun.com/debian bullseye main" > /etc/apt/sources
                     apt-get update && apt-get install -y --no-install-recommends \
                         git \
                         imagemagick \
-                        ffmpeg || \
+                        ffmpeg \
+                        build-essential \
+                        pkg-config \
+                        python3-dev \
+                        libcairo2-dev \
+                        libpango1.0-dev || \
                     ( \
                         echo "Tsinghua mirror failed, switching to default Debian mirror"; \
                         sed -i 's/mirrors.tuna.tsinghua.edu.cn/deb.debian.org/g' /etc/apt/sources.list && \
@@ -36,7 +46,12 @@ RUN echo "deb http://mirrors.aliyun.com/debian bullseye main" > /etc/apt/sources
                         apt-get update && apt-get install -y --no-install-recommends \
                             git \
                             imagemagick \
-                            ffmpeg; \
+                            ffmpeg \
+                            build-essential \
+                            pkg-config \
+                            python3-dev \
+                            libcairo2-dev \
+                            libpango1.0-dev; \
                     ); \
                 ); \
             fi; \
