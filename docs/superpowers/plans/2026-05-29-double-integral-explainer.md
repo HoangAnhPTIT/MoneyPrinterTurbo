@@ -637,9 +637,11 @@ class TestRender(unittest.TestCase):
             with mock.patch.object(render_mod, "_tempconfig_for", return_value=_nullctx()):
                 out = render_mod.render_beat(FakeBeat(), target_duration=7.5,
                                              out_dir=d, index=2)
-        self.assertEqual(captured["target_duration"], 7.5)
-        self.assertTrue(out.endswith("beat-2.mp4"))
-        self.assertTrue(os.path.exists(out))
+            # Assertions stay INSIDE the tempdir context — `out` lives under `d`,
+            # which is deleted on exit, so os.path.exists(out) must be checked here.
+            self.assertEqual(captured["target_duration"], 7.5)
+            self.assertTrue(out.endswith("beat-2.mp4"))
+            self.assertTrue(os.path.exists(out))
 
 
 import contextlib
@@ -670,8 +672,25 @@ def _import_manim_tempconfig():
         return tempconfig
     except ImportError as exc:  # pragma: no cover - exercised only without manim
         raise RuntimeError(
-            "manim is not installed. Install it with: pip install manim==0.18.1"
+            "manim is not installed. Install it with: pip install 'manim>=0.18.1,<0.19'"
         ) from exc
+
+
+def _resolve_ffmpeg() -> str:
+    """Resolve an ffmpeg binary for Manim, mirroring video.get_ffmpeg_binary().
+
+    Manim shells out to `config.ffmpeg_executable` (default "ffmpeg" on PATH). This repo
+    does not require a system ffmpeg — moviepy ships one via imageio-ffmpeg — so point
+    Manim at the same binary instead of depending on PATH.
+    """
+    exe = os.environ.get("IMAGEIO_FFMPEG_EXE") or shutil.which("ffmpeg")
+    if exe:
+        return exe
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:  # pragma: no cover - last-resort fallback
+        return "ffmpeg"
 
 
 def _tempconfig_for(out_dir: str, index: int):
@@ -690,6 +709,7 @@ def _tempconfig_for(out_dir: str, index: int):
         "output_file": f"beat-{index}",
         "disable_caching": True,
         "verbosity": "ERROR",
+        "ffmpeg_executable": _resolve_ffmpeg(),
     }
     return tempconfig(settings)
 
